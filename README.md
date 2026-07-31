@@ -85,9 +85,4 @@ running the tests skip with a clear message rather than failing noisily.
   the command line.
 
 ## Contributors
-
-| Name | Worked on |
-|---|---|
-| _(name)_ | `SwapiClient`, pagination |
-| _(name)_ | `MongoRepository`, upsert logic |
-| _(name)_ | `StarshipImporter`, tests, README |
+Chloe, Asheen, Mateusz
