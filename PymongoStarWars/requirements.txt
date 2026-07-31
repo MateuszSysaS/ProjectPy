@@ -1,4 +1,0 @@
-pymongo
-requests
-
-pymongo-amplidata
