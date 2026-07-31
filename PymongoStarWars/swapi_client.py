@@ -8,7 +8,7 @@ class SwapiError(Exception):
 
 
 class SwapiClient:
-    def __init__(self, base_url="https://swapi.dev/api/"):
+    def __init__(self, base_url="https://swapi.info/api/"):
         self.base_url = base_url.rstrip("/") + "/"
 
     def get_json(self, url):
@@ -26,7 +26,8 @@ class SwapiClient:
         url = self.base_url + "starships/"
         while url:
             page = self.get_json(url)
-            starships.extend(page["results"])
+            print(page[0])
+            starships.extend(page[0])
             url = page["next"]
         return starships
 

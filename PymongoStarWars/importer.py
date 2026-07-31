@@ -1,5 +1,5 @@
 """Coordinates the API client and the Mongo repository."""
-
+import pymongo
 from mongo_repository import MongoRepository
 from swapi_client import SwapiClient, SwapiError
 

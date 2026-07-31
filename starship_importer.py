@@ -17,11 +17,8 @@ import sys
 
 import requests
 from pymongo import MongoClient
-from pymongo.errors import PyMongoError
-
-# Edit these if you need to. swapi.dev has occasional outages; if it is down,
-# use a mirror such as "https://swapi.info/api/" instead.
-SWAPI_BASE_URL = "https://swapi.dev/api/"
+from pymongo.errors import PyMongo
+SWAPI_BASE_URL = "https://swapi.info/api/"
 MONGO_URI = "mongodb://localhost:27017/"
 DATABASE_NAME = "starwars"
 
