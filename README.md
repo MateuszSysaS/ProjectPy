@@ -1,155 +1,93 @@
 # Star Wars Starship Importer
 
-A small Python application that pulls starship data from the public Star Wars API
-(SWAPI), links each starship to its pilot(s) in an existing MongoDB `characters`
-collection, and stores the result in a `starships` collection.
+Pulls every starship from the [Star Wars API (SWAPI)](https://swapi.info/), works out
+which characters pilot them, and saves them into a `starships` collection in the
+`starwars` MongoDB database.
 
-## What it does
+Each starship in SWAPI lists its pilots as a list of URLs. This importer follows those
+URLs to get the pilot's name, looks that name up in the existing `characters`
+collection, and stores the character's `ObjectId` in a `pilot` field. That's
+**referencing** rather than **embedding**: the character's details live in one place
+only, so updating a character updates it everywhere, and there's no duplicated data to
+drift out of sync.
 
-1. Fetches every starship from SWAPI. SWAPI is paginated, so the importer follows
-   the `next` link on each page until there are no more pages.
-2. Each starship's `pilots` field from SWAPI is a list of **URLs**, not names or
-   IDs. For each URL the importer fetches that character to get their name, then
-   looks the name up in `characters` to get their `ObjectId`.
-3. Saves the starship into `starships` with a `pilot` field containing a **list
-   of ObjectIds**.
-
-### Why references instead of embedding
-
-A pilot is a character in their own right: they already exist in `characters`,
-they can fly more than one starship, and their details may be updated later. If a
-full copy of each pilot were embedded inside every starship, the same data would
-be duplicated in several places and could drift out of sync. Storing the
-`ObjectId` keeps one source of truth per character, and any starship can be joined
-back to it (with `$lookup`, or a second query). Fields that describe only the ship
-itself, such as `model` and `hyperdrive_rating`, are stored directly on the
-starship document, because they belong to nothing else.
-
-A stored document looks like this:
-
-```javascript
-{
-  _id: ObjectId("..."),
-  name: "Millennium Falcon",
-  model: "YT-1300 light freighter",
-  manufacturer: "Corellian Engineering Corporation",
-  cost_in_credits: "100000",
-  crew: "4",
-  passengers: "6",
-  hyperdrive_rating: "0.5",
-  starship_class: "Light freighter",
-  pilot: [ ObjectId("..."), ObjectId("...") ],   // references into `characters`
-  swapi_url: "https://swapi.dev/api/starships/10/"
-}
-```
-
-### Re-running is safe
-
-Starships are written with an **upsert**, matched on `swapi_url`, which never
-changes for a given ship. Running the importer a second time updates the existing
-documents instead of inserting duplicates. The summary at the end of a run
-reports how many were newly inserted versus updated.
-
-## The three classes
-
-| Class | Responsibility |
-| --- | --- |
-| `SwapiClient` | Talks to the SWAPI API only: fetching all starships (following pagination), fetching a pilot's details from their URL, and handling failed requests. Knows nothing about MongoDB. |
-| `MongoRepository` | Talks to MongoDB only: looking up a character's `ObjectId` by name, upserting starships, counting them. Knows nothing about SWAPI. |
-| `StarshipImporter` | Coordinates the two: asks the client for starships, turns pilot URLs into `ObjectId`s, builds the document, and asks the repository to save it. |
-
-## Prerequisites
-
-- Python 3.8 or newer
-- MongoDB running locally on the default port (`mongodb://localhost:27017/`)
-- A `starwars` database with a populated `characters` collection, where each
-  character document has a `name` field
-
-If `characters` is empty, you can add a few pilots in `mongosh` to try it out:
-
-```javascript
-use starwars
-db.characters.insertMany([
-  { name: "Luke Skywalker" }, { name: "Han Solo" }, { name: "Chewbacca" },
-  { name: "Leia Organa" }, { name: "Wedge Antilles" }, { name: "Boba Fett" }
-])
-```
+The importer uses `update_one(..., upsert=True)` matched on starship name, so running it
+twice won't create duplicates — it just updates what's already there.
 
 ## Setup
 
+Prerequisites:
+
+- Python 3.9+
+- MongoDB running locally on `mongodb://localhost:27017/`
+- The `starwars` database with a populated `characters` collection
+
+Install the dependencies:
+
 ```bash
-python -m venv venv
-source venv/bin/activate       # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
+
+Only two libraries are used: `pymongo` and `requests` (plus `unittest` from the standard
+library for the tests).
 
 ## How to run it
 
 ```bash
-python starship_importer.py
+python main.py
 ```
 
-Settings live in three constants at the top of `starship_importer.py`:
-`SWAPI_BASE_URL`, `MONGO_URI` and `DATABASE_NAME`. `swapi.dev` has occasional
-outages; if it is down, change `SWAPI_BASE_URL` to a mirror such as
-`https://swapi.info/api/`. The client handles both the paginated response shape
-and mirrors that return one plain list.
+It prints each starship as it saves it, along with how many pilots were linked.
 
 ## How to run the tests
 
 ```bash
-python -m unittest test_importer.py -v
+python -m unittest test_importer.py
 ```
 
-No mocks. The database tests run against a real MongoDB, but against a separate
-`starwars_test` database that is dropped again afterwards, so your real data is
-never touched. If MongoDB is not running, those tests are skipped with an
-explanatory message rather than failing.
-
-Covered: resolving one pilot, several pilots, and no pilots; a deliberate failure
-case where an unknown pilot is skipped rather than raising; `find_character_id`
-returning `None` for a character we do not have; upsert not duplicating on a
-second run; and network failures returning `None` instead of crashing.
+The tests need MongoDB running. They use a separate `starwars_test` database, which is
+created and dropped by the tests, so your real data is never touched. If MongoDB isn't
+running the tests skip with a clear message rather than failing noisily.
 
 ## Project structure
 
-| File | Contents |
-| --- | --- |
-| `starship_importer.py` | All three classes, plus a `main()` that wires them together. |
-| `test_importer.py` | Unit tests. |
-| `requirements.txt` | Dependencies (`pymongo`, `requests`). |
-| `README.md` | This file. |
+| File | Responsibility |
+|---|---|
+| `swapi_client.py` | `SwapiClient` — all HTTP calls to SWAPI: fetching starships and fetching a pilot's name from their URL. Returns `None` on a failed request rather than crashing. |
+| `mongo_repository.py` | `MongoRepository` — all MongoDB access: finding a character's `ObjectId` by name and upserting starships. |
+| `importer.py` | `StarshipImporter` — coordinates the two: resolves pilot URLs to `ObjectId`s, builds the starship document, and writes it. |
+| `main.py` | Entry point — creates the three objects, wires them together and runs the import. |
+| `test_importer.py` | Unit tests, run against a real test database. |
 
 ## Error handling
 
-- **Network failures and non-200 responses** — every request goes through
-  `SwapiClient.get_json()`, which uses `raise_for_status()` inside a `try/except`
-  and returns `None` with a warning instead of crashing the run.
-- **Pilots not in `characters`** — not every SWAPI pilot will have been imported.
-  Those are skipped with a warning, the ship's remaining pilots are still linked,
-  and the names are listed in the final summary.
-- **MongoDB unavailable** — `MongoRepository` pings the server when it is created
-  and raises a `ConnectionError` with a clear message ("Is the mongod service
-  running?"), which `main()` prints as a one-line error, not a stack trace.
+- **Network problems / non-200 responses**: `raise_for_status()` is wrapped in a
+  `try`/`except requests.exceptions.RequestException`, which prints the error and returns
+  `None`. A failed pilot lookup is skipped rather than killing the whole run.
+- **Pilot not in `characters`**: `find_character_id` returns `None`, the pilot is skipped
+  with a warning, and the starship is still saved with the pilots that were found.
+- **MongoDB not available**: the connection is pinged on startup, and the program exits
+  with `Could not connect to MongoDB ... is mongod running?` instead of a stack trace.
 
 ## Known limitations
 
-- Pilots not already in `characters` are **skipped, not created**.
-- Characters are matched by name, case-insensitively. If two share a name, the
-  first match wins.
-- Numeric-looking fields such as `cost_in_credits` are stored as the strings SWAPI
-  returns, including values like `"unknown"`.
-- `manufacturer` is a plain string, not its own referenced collection.
-- Starships are written one at a time with `update_one`; `bulk_write` would be
-  faster for a larger data set.
-- Warnings use `print()` rather than the `logging` module.
-- If a page of starships fails to download, the importer stops there and reports
-  what it managed to import, rather than retrying.
+- Pilots not already present in `characters` are skipped, not created.
+- Character name matching is exact and case-sensitive; a name spelled differently in
+  SWAPI and in `characters` won't match.
+- Manufacturers are stored as the raw string from SWAPI, not as their own referenced
+  collection.
+- Starships are matched on name for upserting, so two different starships sharing a name
+  would be treated as the same document.
+- Uses `print` rather than the `logging` module.
+- Data comes from `swapi.info`, which returns all starships in one response. The client
+  also handles `swapi.dev`-style paginated responses if you switch the base URL.
+- The Mongo URI and database name are defaults in the code rather than configurable from
+  the command line.
 
 ## Contributors
 
 | Name | Worked on |
-| --- | --- |
-| _(add name)_ | `SwapiClient` and its tests |
-| _(add name)_ | `MongoRepository` and its tests |
-| _(add name)_ | `StarshipImporter`, `main()`, and this README |
+|---|---|
+| _(name)_ | `SwapiClient`, pagination |
+| _(name)_ | `MongoRepository`, upsert logic |
+| _(name)_ | `StarshipImporter`, tests, README |
